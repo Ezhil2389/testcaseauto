@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Edit, Check, ArrowRight, ArrowLeft, Users, Target, Shield, Settings, User, CheckCircle, AlertTriangle, Clock, List, X, Plus } from 'lucide-react';
+import { Edit, Check, ArrowRight, ArrowLeft, Users, Target, Shield, Settings, User, CheckCircle, AlertTriangle, Clock, List, X, Plus, Sparkles, Eye, FileText, Brain } from 'lucide-react';
 import Button from '../../components/UI/Button';
 import Card from '../../components/UI/Card';
 import { useDocumentStore } from '../../store/documentStore';
@@ -21,7 +21,12 @@ const SummaryPreview: React.FC = () => {
     
     // Initialize edited summary with current structured content
     if (currentSummary.structuredContent) {
-      setEditedSummary(currentSummary.editedStructuredContent || currentSummary.structuredContent);
+      const summaryToEdit = currentSummary.editedStructuredContent || currentSummary.structuredContent;
+      // Ensure otherComments field exists
+      setEditedSummary({
+        ...summaryToEdit,
+        otherComments: summaryToEdit.otherComments || ''
+      });
     }
   }, [currentSummary, navigate]);
   
@@ -37,7 +42,15 @@ const SummaryPreview: React.FC = () => {
   };
   
   const handleCancel = () => {
-    setEditedSummary(currentSummary?.editedStructuredContent || currentSummary?.structuredContent || null);
+    const summaryToEdit = currentSummary?.editedStructuredContent || currentSummary?.structuredContent || null;
+    if (summaryToEdit) {
+      setEditedSummary({
+        ...summaryToEdit,
+        otherComments: summaryToEdit.otherComments || ''
+      });
+    } else {
+      setEditedSummary(null);
+    }
     setIsEditing(false);
   };
   
@@ -303,11 +316,21 @@ const SummaryPreview: React.FC = () => {
 
   const updateArrayItem = (field: keyof StructuredSummary, index: number, value: string) => {
     if (!editedSummary) return;
-    const newArray = [...(editedSummary[field] as string[])];
+    const currentArray = editedSummary[field] as string[];
+    const newArray = [...currentArray];
     newArray[index] = value;
     setEditedSummary({
       ...editedSummary,
       [field]: newArray
+    });
+  };
+
+  // Update other comments
+  const updateOtherComments = (value: string) => {
+    if (!editedSummary) return;
+    setEditedSummary({
+      ...editedSummary,
+      otherComments: value
     });
   };
   
@@ -319,6 +342,14 @@ const SummaryPreview: React.FC = () => {
           <ArrowLeft size={16} />
           Back to Upload
         </Button>
+      </div>
+    );
+  }
+  
+  if (!editedSummary) {
+    return (
+      <div className="max-w-4xl mx-auto text-center py-16">
+        <p className="text-lg text-gray-600">Loading summary...</p>
       </div>
     );
   }
@@ -397,65 +428,113 @@ const SummaryPreview: React.FC = () => {
   );
   
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="text-center space-y-4">
-        <h1 className="text-3xl font-bold">Requirements Analysis</h1>
-        <p className="text-lg text-[var(--text-secondary)] max-w-2xl mx-auto">
-          Review the comprehensive analysis of your business requirements document
+    <div className="max-w-7xl mx-auto space-y-8">
+      {/* Hero Section */}
+      <div className="text-center space-y-4 py-6">
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 rounded-full text-sm font-medium border border-green-200">
+          <Eye size={14} />
+          Analysis Complete
+        </div>
+        <h1 className="text-balance max-w-4xl mx-auto">
+          Review Your Requirements Analysis
+        </h1>
+        <p className="text-lg max-w-2xl mx-auto text-balance text-[var(--text-secondary)]">
+          Comprehensive AI analysis of your business requirements with structured insights
         </p>
         <div className="flex justify-center">
-          <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2">
-            <p className="text-sm text-green-800">
-              Generated on {currentSummary.generatedDate.toLocaleDateString()} at {currentSummary.generatedDate.toLocaleTimeString()}
-            </p>
+          <div className="info-card border-green-200 bg-green-50">
+            <div className="flex items-center gap-3">
+              <div className="w-6 h-6 bg-green-100 text-green-600 rounded-lg flex items-center justify-center">
+                <Clock size={14} />
+              </div>
+              <div className="text-left">
+                <p className="text-sm font-medium text-green-800">
+                  Generated on {currentSummary.generatedDate.toLocaleDateString()}
+                </p>
+                <p className="text-xs text-green-600">
+                  at {currentSummary.generatedDate.toLocaleTimeString()}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Edit Mode Banner */}
+      {isEditing && (
+        <div className="info-card border-blue-200 bg-blue-50">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center">
+                <Edit size={16} />
+              </div>
+              <div>
+                <h3 className="font-semibold text-blue-900">Edit Mode Active</h3>
+                <p className="text-sm text-blue-700">Make changes to improve the analysis before generating test cases</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={handleCancel} size="sm">
+                Cancel
+              </Button>
+              <Button onClick={handleSave} size="sm">
+                <Check size={16} />
+                Save Changes
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Project Overview */}
-      <Card className="card-spacious">
+      <div className="card card-spacious shadow-glow">
         <div className="section-header">
-          <div className="section-icon bg-blue-50 text-blue-600">
+          <div className="section-icon">
             <Target size={24} />
           </div>
           <div>
-            <h2>Project Overview</h2>
-            <p className="mt-2">High-level project information and objectives</p>
+            <h2 className="gradient-text">Project Overview</h2>
+            <p className="mt-2 text-lg">High-level project information and strategic objectives</p>
           </div>
         </div>
         
-        <div className="space-y-6">
-          <div>
-            <h3 className="font-semibold text-lg mb-2">
+        <div className="space-y-8">
+          <div className="info-card border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50">
+            <h3 className="font-semibold text-lg mb-3 text-blue-900">
               <EditableInput
                 value={summary.projectOverview.title}
                 onChange={(value) => updateProjectOverview('title', value)}
-                className="font-semibold text-lg"
+                className="font-semibold text-lg text-blue-900"
                 placeholder="Project title"
               />
             </h3>
             <EditableTextarea
               value={summary.projectOverview.description}
               onChange={(value) => updateProjectOverview('description', value)}
-              className="text-[var(--text-secondary)]"
+              className="text-blue-800"
               placeholder="Project description"
             />
           </div>
           
-          <div>
-            <h4 className="font-medium mb-2">Project Scope</h4>
+          <div className="info-card border-purple-200 bg-gradient-to-br from-purple-50 to-pink-50">
+            <h4 className="font-semibold mb-3 text-purple-900 flex items-center gap-2">
+              <FileText size={18} />
+              Project Scope
+            </h4>
             <EditableTextarea
               value={summary.projectOverview.scope}
               onChange={(value) => updateProjectOverview('scope', value)}
-              className="text-[var(--text-secondary)]"
+              className="text-purple-800"
               placeholder="Project scope"
             />
           </div>
           
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="font-medium">Business Objectives</h4>
+          <div className="info-card border-green-200 bg-gradient-to-br from-green-50 to-emerald-50">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="font-semibold text-green-900 flex items-center gap-2">
+                <Target size={18} />
+                Business Objectives
+              </h4>
               {isEditing && (
                 <Button
                   onClick={addObjective}
@@ -467,22 +546,24 @@ const SummaryPreview: React.FC = () => {
                 </Button>
               )}
             </div>
-            <div className="grid gap-2">
+            <div className="grid gap-3">
               {summary.projectOverview.objectives.map((objective, index) => (
-                <div key={index} className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg">
-                  <CheckCircle size={20} className="text-blue-600 flex-shrink-0 mt-0.5" />
+                <div key={index} className="flex items-start gap-3 p-4 bg-white/60 rounded-xl border border-green-200">
+                  <div className="w-6 h-6 bg-green-100 text-green-600 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <CheckCircle size={14} />
+                  </div>
                   <div className="flex-1">
                     <EditableInput
                       value={objective}
                       onChange={(value) => updateObjective(index, value)}
-                      className="text-blue-900 w-full"
+                      className="text-green-900 w-full font-medium"
                       placeholder="Objective description"
                     />
                   </div>
                   {isEditing && (
                     <button
                       onClick={() => removeObjective(index)}
-                      className="text-red-500 hover:text-red-700 flex-shrink-0"
+                      className="text-red-500 hover:text-red-700 flex-shrink-0 p-1 rounded-full hover:bg-red-50"
                     >
                       <X size={16} />
                     </button>
@@ -492,23 +573,24 @@ const SummaryPreview: React.FC = () => {
             </div>
           </div>
         </div>
-      </Card>
+      </div>
 
       {/* Stakeholders */}
-      <Card className="card-spacious">
+      <div className="card card-spacious">
         <div className="section-header">
-          <div className="section-icon bg-purple-50 text-purple-600">
+          <div className="section-icon bg-purple-100 text-purple-600">
             <Users size={24} />
           </div>
           <div>
-            <h2>Stakeholders</h2>
-            <p className="mt-2">Key personnel and their responsibilities</p>
+            <h2 className="gradient-text">Stakeholders</h2>
+            <p className="mt-2 text-lg">Key personnel and their responsibilities in the project</p>
           </div>
           {isEditing && (
             <Button
               onClick={addStakeholder}
               variant="outline"
               size="sm"
+              className="shadow-glow"
             >
               <Plus size={16} />
               Add Stakeholder
@@ -516,36 +598,39 @@ const SummaryPreview: React.FC = () => {
           )}
         </div>
         
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {summary.stakeholders.map((stakeholder, index) => (
-            <div key={index} className="bg-purple-50 border border-purple-200 rounded-lg p-4 relative">
+            <div key={index} className="info-card border-purple-200 bg-gradient-to-br from-purple-50 to-pink-50 relative">
               {isEditing && (
                 <button
                   onClick={() => removeStakeholder(index)}
-                  className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                  className="absolute top-3 right-3 text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-50"
                 >
                   <X size={16} />
                 </button>
               )}
-              <div className="flex items-center gap-2 mb-3">
-                <User size={18} className="text-purple-600" />
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-purple-100 text-purple-600 rounded-xl flex items-center justify-center">
+                  <User size={18} />
+                </div>
                 <EditableInput
                   value={stakeholder.name}
                   onChange={(value) => updateStakeholder(index, 'name', value)}
-                  className="font-medium text-purple-900"
+                  className="font-semibold text-purple-900"
                   placeholder="Stakeholder name"
                 />
               </div>
               <EditableInput
                 value={stakeholder.role}
                 onChange={(value) => updateStakeholder(index, 'role', value)}
-                className="text-sm text-purple-700 mb-3 block"
+                className="text-sm text-purple-700 mb-4 block font-medium"
                 placeholder="Role"
               />
-              <div className="space-y-1">
+              <div className="space-y-2">
+                <h5 className="text-xs font-semibold text-purple-900 uppercase tracking-wide">Responsibilities</h5>
                 {stakeholder.responsibilities.map((resp, respIndex) => (
                   <div key={respIndex} className="flex items-start gap-2">
-                    <div className="w-1.5 h-1.5 bg-purple-400 rounded-full mt-1.5 flex-shrink-0" />
+                    <div className="w-1.5 h-1.5 bg-purple-400 rounded-full mt-2 flex-shrink-0" />
                     <EditableInput
                       value={resp}
                       onChange={(value) => {
@@ -562,7 +647,7 @@ const SummaryPreview: React.FC = () => {
             </div>
           ))}
         </div>
-      </Card>
+      </div>
 
       {/* Functional Requirements */}
       <Card className="card-spacious">
@@ -1009,12 +1094,34 @@ const SummaryPreview: React.FC = () => {
         </Card>
       </div>
 
+      {/* Other Comments Section */}
+      <Card className="mt-8">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold flex items-center gap-2">
+            <Edit size={20} className="text-gray-600" />
+            Other Comments
+          </h3>
+        </div>
+        <div className="space-y-2">
+          <p className="text-sm text-[var(--text-secondary)] mb-3">
+            Add any additional comments, notes, or context that might be important for test case generation but doesn't fit into the above categories.
+          </p>
+          <EditableTextarea
+            value={editedSummary?.otherComments || ''}
+            onChange={updateOtherComments}
+            className="min-h-[120px] w-full"
+            placeholder="Enter any additional comments, special considerations, edge cases, or context that should be considered during test case generation..."
+          />
+        </div>
+      </Card>
+
       {/* Action Buttons */}
-      <div className="flex justify-between items-center pt-8">
+      <div className="flex justify-between items-center pt-12 pb-8">
         <Button
           variant="outline"
           onClick={handleBack}
           size="lg"
+          className="flex items-center gap-2"
         >
           <ArrowLeft size={16} />
           Back to Upload
@@ -1026,6 +1133,7 @@ const SummaryPreview: React.FC = () => {
               variant="outline"
               onClick={handleEdit}
               size="lg"
+              className="shadow-glow flex items-center gap-2"
             >
               <Edit size={16} />
               Edit Summary
@@ -1035,11 +1143,14 @@ const SummaryPreview: React.FC = () => {
               <Button
                 variant="outline"
                 onClick={handleCancel}
+                size="lg"
               >
                 Cancel
               </Button>
               <Button
                 onClick={handleSave}
+                size="lg"
+                className="shadow-glow-success"
               >
                 <Check size={16} />
                 Save Changes
@@ -1050,8 +1161,9 @@ const SummaryPreview: React.FC = () => {
           <Button
             onClick={handleNext}
             size="lg"
-            className="btn-primary"
+            className="btn-primary shadow-glow flex items-center gap-2"
           >
+            <Brain size={20} />
             Generate Test Cases
             <ArrowRight size={16} />
           </Button>

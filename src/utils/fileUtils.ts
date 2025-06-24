@@ -1,4 +1,6 @@
 import { Document } from '../types';
+import mammoth from 'mammoth';
+import * as XLSX from 'xlsx';
 
 export interface ProcessedFile {
   name: string;
@@ -8,95 +10,227 @@ export interface ProcessedFile {
   lastModified: number;
 }
 
-export const readFileContent = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
+const getFileExtension = (filename: string): string => {
+  return filename.split('.').pop()?.toLowerCase() || '';
+};
+
+const formatFileSize = (bytes: number): string => {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+// Simple PDF text extraction using basic parsing
+const parsePDF = async (file: File): Promise<string> => {
+  try {
+    console.log(`Attempting to extract text from PDF: ${file.name}`);
     
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result === 'string') {
-        // Check if this looks like binary data (common for PDFs)
-        if (isProbablyBinaryContent(result)) {
-          resolve(`[BINARY FILE DETECTED]
-
-This appears to be a binary file (likely a PDF or Office document).
-For best results, please:
-1. Convert your document to plain text (.txt) format, or
-2. Copy and paste the content directly into a text document
-
-File: ${file.name}
-Size: ${file.size} bytes
-Type: ${file.type}
-
-Note: PDF text extraction requires specialized libraries. The system will attempt to analyze any readable content, but may fall back to generic templates.`);
-        } else {
-          resolve(result);
+    // For now, we'll use a simple approach that extracts readable text from PDF
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
+    
+    // Extract text between common PDF text markers
+    const textMatches = text.match(/\(([^)]+)\)/g) || [];
+    const extractedText = textMatches
+      .map(match => match.slice(1, -1)) // Remove parentheses
+      .filter(text => text.length > 2 && /[a-zA-Z]/.test(text)) // Filter meaningful text
+      .join(' ');
+    
+    // Also try to extract text using BT/ET markers (PDF text objects)
+    const btEtMatches = text.match(/BT\s+.*?ET/gs) || [];
+    const btEtText = btEtMatches
+      .map(match => {
+        // Extract text from PDF text objects
+        const textParts = match.match(/\(([^)]+)\)/g) || [];
+        return textParts.map(part => part.slice(1, -1)).join(' ');
+      })
+      .join(' ');
+    
+    // Try to extract text using Tj operators
+    const tjMatches = text.match(/\(([^)]*)\)\s*Tj/g) || [];
+    const tjText = tjMatches
+      .map(match => {
+        const textMatch = match.match(/\(([^)]*)\)/);
+        return textMatch ? textMatch[1] : '';
+      })
+      .filter(t => t.length > 0)
+      .join(' ');
+    
+    // Try to extract text using TJ operators (array format)
+    const tjArrayMatches = text.match(/\[([^\]]*)\]\s*TJ/g) || [];
+    const tjArrayText = tjArrayMatches
+      .map(match => {
+        const arrayMatch = match.match(/\[([^\]]*)\]/);
+        if (arrayMatch) {
+          const strings = arrayMatch[1].match(/\(([^)]*)\)/g) || [];
+          return strings.map(s => s.slice(1, -1)).join('');
         }
-      } else {
-        reject(new Error('Failed to read file as text'));
-      }
-    };
+        return '';
+      })
+      .filter(t => t.length > 0)
+      .join(' ');
     
-    reader.onerror = () => {
-      reject(new Error(`Failed to read file: ${file.name}`));
-    };
+    // Combine all extracted text
+    const combinedText = [extractedText, btEtText, tjText, tjArrayText]
+      .filter(t => t.length > 0)
+      .join(' ')
+      .trim();
     
-    // Handle different file types
-    const fileExtension = getFileExtension(file.name).toLowerCase();
+    // Clean up the extracted text
+    const cleanedText = combinedText
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .replace(/[^\x20-\x7E\s]/g, '') // Remove non-printable characters except spaces
+      .trim();
     
-    switch (fileExtension) {
+    console.log(`PDF extraction result: ${cleanedText.length} characters extracted`);
+    
+    if (cleanedText.length < 50) {
+      // If we can't extract enough text, provide a helpful message
+      throw new Error(`Unable to extract sufficient text from PDF "${file.name}". 
+
+This PDF may contain:
+• Scanned images instead of selectable text
+• Complex formatting that prevents text extraction
+• Encrypted or protected content
+
+Please try:
+1. Converting the PDF to a Word document (.docx) using an online converter
+2. Opening the PDF and copying/pasting the text into a .txt file
+3. Using a different PDF that contains selectable text
+4. Uploading the original Word document if available
+
+For best results, use Word documents (.docx) or plain text files (.txt).`);
+    }
+    
+    return cleanedText;
+  } catch (error) {
+    console.error('Error parsing PDF:', error);
+    if (error instanceof Error && error.message.includes('Unable to extract sufficient text')) {
+      throw error; // Re-throw our helpful error message
+    }
+    throw new Error(`Failed to parse PDF "${file.name}": ${error instanceof Error ? error.message : 'PDF parsing not supported in this environment.'} 
+
+Please convert to Word (.docx) or text (.txt) format for best results.`);
+  }
+};
+
+// Word document parsing function
+const parseWordDocument = async (file: File): Promise<string> => {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    
+    if (result.messages.length > 0) {
+      console.warn('Word parsing warnings:', result.messages);
+    }
+    
+    return result.value.trim();
+  } catch (error) {
+    console.error('Error parsing Word document:', error);
+    throw new Error(`Failed to parse Word document: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+// Excel parsing function
+const parseExcelFile = async (file: File): Promise<string> => {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    let fullText = '';
+    
+    workbook.SheetNames.forEach(sheetName => {
+      const worksheet = workbook.Sheets[sheetName];
+      const sheetText = XLSX.utils.sheet_to_txt(worksheet);
+      fullText += `\n=== Sheet: ${sheetName} ===\n${sheetText}\n`;
+    });
+    
+    return fullText.trim();
+  } catch (error) {
+    console.error('Error parsing Excel file:', error);
+    throw new Error(`Failed to parse Excel file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+// Text file parsing function
+const parseTextFile = async (file: File): Promise<string> => {
+  try {
+    const text = await file.text();
+    return text.trim();
+  } catch (error) {
+    console.error('Error parsing text file:', error);
+    throw new Error(`Failed to parse text file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+// PowerPoint parsing function (basic text extraction)
+const parsePowerPointFile = async (file: File): Promise<string> => {
+  try {
+    // For now, we'll treat PPT files as binary and extract what we can
+    // In a full implementation, you'd use a library like pptx2json
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
+    
+    // Extract readable text from the binary content
+    const readableText = text
+      .replace(/[\x00-\x1F\x7F-\xFF]/g, ' ') // Replace non-printable chars with spaces
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .trim();
+    
+    if (readableText.length < 50) {
+      throw new Error('Unable to extract meaningful text from PowerPoint file. Please convert to Word or text format.');
+    }
+    
+    return readableText;
+  } catch (error) {
+    console.error('Error parsing PowerPoint file:', error);
+    throw new Error(`Failed to parse PowerPoint file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+export const readFileContent = async (file: File): Promise<string> => {
+  const extension = getFileExtension(file.name);
+  
+  try {
+    switch (extension) {
+      case 'pdf':
+        return await parsePDF(file);
+      
+      case 'doc':
+      case 'docx':
+        return await parseWordDocument(file);
+      
+      case 'xls':
+      case 'xlsx':
+        return await parseExcelFile(file);
+      
+      case 'ppt':
+      case 'pptx':
+        return await parsePowerPointFile(file);
+      
       case 'txt':
       case 'md':
       case 'csv':
-        reader.readAsText(file);
-        break;
-      case 'pdf':
-        // For PDF files, read as text but we'll detect binary content
-        reader.readAsText(file);
-        break;
-      case 'doc':
-      case 'docx':
-      case 'xls':
-      case 'xlsx':
-        // For Office documents, read as text but we'll detect binary content
-        reader.readAsText(file);
-        break;
+        return await parseTextFile(file);
+      
       default:
-        reader.readAsText(file);
+        // Try to parse as text for unknown file types
+        return await parseTextFile(file);
     }
-  });
-};
-
-// Helper function to detect binary content
-const isProbablyBinaryContent = (content: string): boolean => {
-  // Check for PDF signature
-  if (content.startsWith('%PDF-')) {
-    return true;
+  } catch (error) {
+    console.error(`Error processing ${file.name}:`, error);
+    throw new Error(`Unable to process ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-  
-  // Check for common binary signatures
-  if (content.startsWith('PK') || content.startsWith('\u0000') || content.includes('\uFFFD')) {
-    return true;
-  }
-  
-  // Count non-printable characters
-  const nonPrintableCount = content.split('').filter(char => {
-    const code = char.charCodeAt(0);
-    return code < 32 && code !== 9 && code !== 10 && code !== 13; // Exclude tab, newline, carriage return
-  }).length;
-  
-  // If more than 5% of characters are non-printable, consider it binary
-  return (nonPrintableCount / content.length) > 0.05;
 };
 
 export const processDocumentContent = (content: string, fileName: string): string => {
   const fileExtension = getFileExtension(fileName).toLowerCase();
   
-  // Clean and enhance content based on file type
-  let processedContent = content;
-  
-  // Remove common file artifacts and clean up text
-  processedContent = processedContent
+  // Clean and enhance content
+  let processedContent = content
     .replace(/\r\n/g, '\n') // Normalize line endings
     .replace(/\n{3,}/g, '\n\n') // Remove excessive line breaks
     .replace(/\t/g, ' ') // Replace tabs with spaces
@@ -120,8 +254,21 @@ ${processedContent}
 
 export const createDocumentFromFile = async (file: File): Promise<Document> => {
   try {
+    console.log(`Processing file: ${file.name} (${formatFileSize(file.size)})`);
+    
     const rawContent = await readFileContent(file);
+    
+    if (!rawContent || rawContent.trim().length === 0) {
+      throw new Error('No content could be extracted from the file');
+    }
+    
+    if (rawContent.trim().length < 10) {
+      throw new Error('Extracted content is too short to be meaningful');
+    }
+    
     const processedContent = processDocumentContent(rawContent, file.name);
+    
+    console.log(`Successfully processed ${file.name}: ${rawContent.length} characters extracted`);
     
     return {
       id: crypto.randomUUID(),
@@ -139,7 +286,7 @@ export const createDocumentFromFile = async (file: File): Promise<Document> => {
     };
   } catch (error) {
     console.error(`Error processing file ${file.name}:`, error);
-    throw new Error(`Failed to process file: ${file.name}`);
+    throw new Error(`Failed to process ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 };
 
@@ -151,10 +298,13 @@ export const validateFileType = (file: File): { isValid: boolean; error?: string
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/vnd.ms-excel',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'text/csv'
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/csv',
+    'text/markdown'
   ];
   
-  const allowedExtensions = ['txt', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'md'];
+  const allowedExtensions = ['txt', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'md'];
   const fileExtension = getFileExtension(file.name).toLowerCase();
   
   if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(fileExtension)) {
@@ -164,30 +314,16 @@ export const validateFileType = (file: File): { isValid: boolean; error?: string
     };
   }
   
-  // Check file size (max 10MB)
-  const maxSize = 10 * 1024 * 1024; // 10MB
+  // Check file size (max 50MB for document processing)
+  const maxSize = 50 * 1024 * 1024; // 50MB
   if (file.size > maxSize) {
     return {
       isValid: false,
-      error: 'File size too large. Maximum size is 10MB.'
+      error: 'File size too large. Maximum size is 50MB.'
     };
   }
   
   return { isValid: true };
-};
-
-export const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 Bytes';
-  
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
-
-export const getFileExtension = (filename: string): string => {
-  return filename.slice(((filename.lastIndexOf('.') - 1) >>> 0) + 2);
 };
 
 export const getFileIcon = (filename: string): string => {
@@ -229,6 +365,10 @@ export const getFileTypeDescription = (filename: string): string => {
       return 'Excel Spreadsheet (Legacy)';
     case 'xlsx':
       return 'Excel Spreadsheet';
+    case 'ppt':
+      return 'PowerPoint Presentation (Legacy)';
+    case 'pptx':
+      return 'PowerPoint Presentation';
     case 'txt':
       return 'Text Document';
     case 'md':
@@ -245,20 +385,7 @@ export const processFiles = async (files: File[]): Promise<ProcessedFile[]> => {
   
   for (const file of files) {
     try {
-      let content = '';
-      
-      if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-        content = await readTextFile(file);
-      } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-        // For now, we'll handle PDF as text - in a real app you'd use pdf-parse
-        content = `PDF file: ${file.name} (${formatFileSize(file.size)})`;
-      } else {
-        // Try to read as text for other file types
-        content = await readTextFile(file);
-      }
-      
-      // Clean and normalize the content
-      content = cleanAndNormalizeText(content);
+      const content = await readFileContent(file);
       
       processedFiles.push({
         name: file.name,
@@ -269,63 +396,11 @@ export const processFiles = async (files: File[]): Promise<ProcessedFile[]> => {
       });
     } catch (error) {
       console.error(`Error processing file ${file.name}:`, error);
-      // Add file with error message
-      processedFiles.push({
-        name: file.name,
-        content: `Error reading file: ${file.name}`,
-        size: file.size,
-        type: file.type || 'unknown',
-        lastModified: file.lastModified
-      });
+      throw error; // Don't add files that failed to process
     }
   }
   
   return processedFiles;
-};
-
-const readTextFile = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    
-    reader.onload = (event) => {
-      const result = event.target?.result;
-      if (typeof result === 'string') {
-        resolve(result);
-      } else {
-        reject(new Error('Failed to read file as text'));
-      }
-    };
-    
-    reader.onerror = () => {
-      reject(new Error('File reading failed'));
-    };
-    
-    // Read as text with UTF-8 encoding
-    reader.readAsText(file, 'UTF-8');
-  });
-};
-
-const cleanAndNormalizeText = (text: string): string => {
-  // Remove only the most problematic control characters, preserve normal formatting
-  let cleaned = text
-    // Remove null bytes and dangerous control characters, but keep tabs and line breaks
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
-    // Normalize line breaks
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    // Clean up excessive whitespace but preserve intentional spacing
-    .replace(/[ \t]{4,}/g, '   ') // Replace 4+ spaces/tabs with 3 spaces
-    // Remove excessive line breaks (more than 3 consecutive)
-    .replace(/\n{4,}/g, '\n\n\n')
-    // Trim the entire content
-    .trim();
-  
-  // Ensure we have valid text content
-  if (!cleaned || cleaned.length < 10) {
-    return 'Document content could not be processed properly.';
-  }
-  
-  return cleaned;
 };
 
 export const combineDocuments = (files: ProcessedFile[]): string => {
@@ -353,17 +428,13 @@ export const validateFileContent = (content: string): { isValid: boolean; errors
   }
   
   if (content.length < 50) {
-    errors.push('Document content is too short to analyze');
+    errors.push('Document content is too short to analyze meaningfully');
   }
   
-  // More lenient check for binary content - only flag if there's a high percentage of control characters
-  const controlCharCount = (content.match(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g) || []).length;
-  const totalChars = content.length;
-  const controlCharPercentage = totalChars > 0 ? (controlCharCount / totalChars) * 100 : 0;
-  
-  // Only flag as binary if more than 5% of characters are control characters
-  if (controlCharPercentage > 5) {
-    errors.push('Document appears to contain binary data');
+  // Check for actual readable content
+  const readableContent = content.replace(/[^a-zA-Z0-9\s]/g, '').trim();
+  if (readableContent.length < 20) {
+    errors.push('Document does not contain sufficient readable text');
   }
   
   return {

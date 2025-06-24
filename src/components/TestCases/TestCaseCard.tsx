@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Users, FileText, Timer, Target } from 'lucide-react';
+import { ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Users, FileText, Timer, Target, Edit, Trash2 } from 'lucide-react';
 import { TestCase } from '../../types';
 import Button from '../UI/Button';
 import { useDocumentStore } from '../../store/documentStore';
 
 interface TestCaseCardProps {
   testCase: TestCase;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }
 
-const TestCaseCard: React.FC<TestCaseCardProps> = ({ testCase }) => {
+const TestCaseCard: React.FC<TestCaseCardProps> = ({ testCase, onEdit, onDelete }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const { updateTestCase } = useDocumentStore();
   
@@ -218,42 +220,71 @@ const TestCaseCard: React.FC<TestCaseCardProps> = ({ testCase }) => {
             </div>
             
             {/* Status Actions */}
-            <div className="flex gap-2 pt-4 border-t border-gray-200">
-              <Button
-                size="sm"
-                variant={testCase.status === 'Not Started' ? 'primary' : 'outline'}
-                onClick={() => handleStatusChange('Not Started')}
-              >
-                Not Started
-              </Button>
-              <Button
-                size="sm"
-                variant={testCase.status === 'In Progress' ? 'primary' : 'outline'}
-                onClick={() => handleStatusChange('In Progress')}
-              >
-                In Progress
-              </Button>
-              <Button
-                size="sm"
-                variant={testCase.status === 'Passed' ? 'primary' : 'outline'}
-                onClick={() => handleStatusChange('Passed')}
-              >
-                Passed
-              </Button>
-              <Button
-                size="sm"
-                variant={testCase.status === 'Failed' ? 'primary' : 'outline'}
-                onClick={() => handleStatusChange('Failed')}
-              >
-                Failed
-              </Button>
-              <Button
-                size="sm"
-                variant={testCase.status === 'Blocked' ? 'primary' : 'outline'}
-                onClick={() => handleStatusChange('Blocked')}
-              >
-                Blocked
-              </Button>
+            <div className="flex justify-between items-center pt-4 border-t border-gray-200">
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant={testCase.status === 'Not Started' ? 'primary' : 'outline'}
+                  onClick={() => handleStatusChange('Not Started')}
+                >
+                  Not Started
+                </Button>
+                <Button
+                  size="sm"
+                  variant={testCase.status === 'In Progress' ? 'primary' : 'outline'}
+                  onClick={() => handleStatusChange('In Progress')}
+                >
+                  In Progress
+                </Button>
+                <Button
+                  size="sm"
+                  variant={testCase.status === 'Passed' ? 'primary' : 'outline'}
+                  onClick={() => handleStatusChange('Passed')}
+                >
+                  Passed
+                </Button>
+                <Button
+                  size="sm"
+                  variant={testCase.status === 'Failed' ? 'primary' : 'outline'}
+                  onClick={() => handleStatusChange('Failed')}
+                >
+                  Failed
+                </Button>
+                <Button
+                  size="sm"
+                  variant={testCase.status === 'Blocked' ? 'primary' : 'outline'}
+                  onClick={() => handleStatusChange('Blocked')}
+                >
+                  Blocked
+                </Button>
+              </div>
+              
+              {(onEdit || onDelete) && (
+                <div className="flex gap-2">
+                  {onEdit && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={onEdit}
+                      className="text-blue-600 hover:text-blue-700 hover:border-blue-200 hover:bg-blue-50"
+                    >
+                      <Edit size={14} />
+                      Edit
+                    </Button>
+                  )}
+                  {onDelete && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={onDelete}
+                      className="text-red-600 hover:text-red-700 hover:border-red-200 hover:bg-red-50"
+                    >
+                      <Trash2 size={14} />
+                      Delete
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

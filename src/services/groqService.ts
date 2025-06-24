@@ -1,6 +1,6 @@
-const API_KEY = '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';
+const API_KEY = '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';
 const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'llama3-70b-8192'; // Using a more reliable model
+const MODEL = 'meta-llama/llama-4-maverick-17b-128e-instruct'; // Using a more reliable model
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -62,6 +62,7 @@ export interface StructuredSummary {
   constraints: string[];
   assumptions: string[];
   dependencies: string[];
+  otherComments?: string;
 }
 
 export interface TestCase {
@@ -93,6 +94,24 @@ CRITICAL INSTRUCTIONS:
 - Extract actual information from the document when available
 - Use generic fallbacks only when specific information is not found
 - All string values must be properly escaped for JSON
+- Ignore any corrupted, garbled, or non-text content in the document
+- Focus on extracting meaningful business requirements content
+- IMPORTANT: Include ANY important content that doesn't fit the structured fields in the "otherComments" field
+
+SPECIAL INSTRUCTION FOR OTHER COMMENTS:
+If the document contains any significant information that cannot be categorized into the structured fields above (project overview, stakeholders, requirements, user stories, business rules, constraints, assumptions, dependencies), include it in the "otherComments" field. This includes:
+- Technical specifications or implementation details
+- Risk considerations and mitigation strategies
+- Compliance requirements or regulatory considerations
+- Performance metrics or KPIs
+- Timeline information or project phases
+- Budget or resource considerations
+- Integration requirements with external systems
+- Data migration or legacy system considerations
+- Training requirements
+- Support and maintenance considerations
+- Any other relevant business context or notes
+- Important details that provide additional context for the project
 
 REQUIRED JSON FORMAT (copy this structure exactly):
 {
@@ -137,15 +156,18 @@ REQUIRED JSON FORMAT (copy this structure exactly):
   "businessRules": ["Array of business rule strings"],
   "constraints": ["Array of constraint strings"],
   "assumptions": ["Array of assumption strings"],
-  "dependencies": ["Array of dependency strings"]
+  "dependencies": ["Array of dependency strings"],
+  "otherComments": "Include any additional important information from the document that doesn't fit into the above structured categories. If no additional information is found, leave this as an empty string."
 }
 
 VALIDATION RULES:
 - All arrays must have at least 1 item
 - Priority values must be exactly: "Critical", "High", "Medium", or "Low"
-- All strings must be non-empty
+- All strings must be non-empty except for otherComments which can be empty
 - Functional requirements must have sequential REQ-XXX IDs
-- User stories must have sequential US-XXX IDs`;
+- User stories must have sequential US-XXX IDs
+- Ignore any garbled text, symbols, or corrupted content from document parsing
+- The otherComments field should capture meaningful additional context, not duplicate information already categorized`;
 
 const TEST_CASE_SYSTEM_PROMPT = `You are an expert QA Engineer. You MUST respond with ONLY a valid JSON array in the EXACT format specified below. No additional text, explanations, or markdown formatting.
 
@@ -209,8 +231,8 @@ async function makeAPICall(messages: ChatMessage[]): Promise<string> {
         top_p: 0.9,
         frequency_penalty: 0.0,
         presence_penalty: 0.0,
-        // Add stop sequences to prevent extra content
-        stop: ["\n\nHuman:", "\n\nAssistant:", "```", "Note:", "Explanation:"]
+        // Add stop sequences to prevent extra content (max 4 items for Groq)
+        stop: ["```", "Note:", "Explanation:", "\n\nHuman:"]
       })
     });
 
@@ -254,10 +276,9 @@ async function makeAPICall(messages: ChatMessage[]): Promise<string> {
 }
 
 export async function generateSummary(documentContent: string): Promise<StructuredSummary> {
-  // Check if this is a binary file notification
-  if (documentContent.includes('[BINARY FILE DETECTED]')) {
-    console.log('Binary file detected, using enhanced fallback with file info');
-    return createBinaryFileFallbackSummary(documentContent);
+  // Validate input content
+  if (!documentContent || documentContent.trim().length < 50) {
+    throw new Error('Document content is too short or empty for meaningful analysis');
   }
 
   const messages: ChatMessage[] = [
@@ -267,10 +288,12 @@ export async function generateSummary(documentContent: string): Promise<Structur
     },
     {
       role: 'user',
-      content: `Analyze this business requirements document and extract structured information. Respond with ONLY the JSON object in the exact format specified:
+      content: `Analyze this business requirements document and extract structured information. Pay special attention to capturing ANY important information that doesn't fit the structured categories in the "otherComments" field. Respond with ONLY the JSON object in the exact format specified:
 
 DOCUMENT CONTENT:
 ${documentContent}
+
+IMPORTANT: Make sure to include in "otherComments" any valuable information from the document that doesn't fit into the structured fields (project overview, stakeholders, requirements, user stories, business rules, constraints, assumptions, dependencies). This could include technical details, risk considerations, compliance requirements, timelines, budgets, implementation notes, or any other relevant context.
 
 Remember: Respond with ONLY the JSON object, no markdown, no explanations.`
     }
@@ -279,24 +302,56 @@ Remember: Respond with ONLY the JSON object, no markdown, no explanations.`
   try {
     console.log('Calling AI service for summary generation...');
     const response = await makeAPICall(messages);
-    console.log('Raw AI response:', response.substring(0, 500) + '...');
+    console.log('Raw AI response received, parsing...');
     
-    // Clean the response more aggressively
+    // More aggressive cleaning for messy content
     let cleanedResponse = response.trim();
     
     // Remove any markdown formatting
     cleanedResponse = cleanedResponse.replace(/```json\s*/g, '').replace(/```\s*/g, '');
     
-    // Remove any explanatory text before the JSON
-    const jsonStart = cleanedResponse.indexOf('{');
-    const jsonEnd = cleanedResponse.lastIndexOf('}') + 1;
+    // Remove common AI prefixes more aggressively
+    const prefixPatterns = [
+      /^Here\s+is\s+the\s+JSON\s*:?\s*/i,
+      /^Here's\s+the\s+JSON\s*:?\s*/i,
+      /^The\s+JSON\s+structure\s+is\s*:?\s*/i,
+      /^Based\s+on\s+the\s+analysis\s*:?\s*/i,
+      /^Analysis\s+result\s*:?\s*/i,
+      /^The\s+extracted\s+information\s*:?\s*/i
+    ];
     
-    if (jsonStart === -1 || jsonEnd === 0) {
-      console.warn('No JSON object found in response. Using fallback.');
-      return createIntelligentFallbackSummary(documentContent);
+    for (const pattern of prefixPatterns) {
+      cleanedResponse = cleanedResponse.replace(pattern, '');
+    }
+    
+    // Find the JSON object more robustly
+    const jsonStart = cleanedResponse.indexOf('{');
+    if (jsonStart === -1) {
+      throw new Error('AI response does not contain a valid JSON object - no opening brace found');
+    }
+    
+    // Find the matching closing brace by counting braces
+    let braceCount = 0;
+    let jsonEnd = -1;
+    
+    for (let i = jsonStart; i < cleanedResponse.length; i++) {
+      if (cleanedResponse[i] === '{') {
+        braceCount++;
+      } else if (cleanedResponse[i] === '}') {
+        braceCount--;
+        if (braceCount === 0) {
+          jsonEnd = i + 1;
+          break;
+        }
+      }
+    }
+    
+    if (jsonEnd === -1) {
+      throw new Error('AI response contains malformed JSON - no matching closing brace found');
     }
     
     const jsonOnly = cleanedResponse.substring(jsonStart, jsonEnd);
+    console.log('Extracted JSON length:', jsonOnly.length);
     
     try {
       const parsedSummary = JSON.parse(jsonOnly) as StructuredSummary;
@@ -304,122 +359,40 @@ Remember: Respond with ONLY the JSON object, no markdown, no explanations.`
       
       // Validate the structure
       if (!parsedSummary.projectOverview || !parsedSummary.functionalRequirements || !Array.isArray(parsedSummary.functionalRequirements)) {
-        throw new Error('Invalid JSON structure from AI');
+        throw new Error('AI response has invalid structure - missing required fields');
       }
       
-      // Ensure all required arrays exist and have content
-      const validatedSummary = validateAndEnhanceSummary(parsedSummary, documentContent);
+      // Ensure minimum content requirements
+      if (parsedSummary.functionalRequirements.length === 0) {
+        throw new Error('AI analysis did not extract any functional requirements from the document');
+      }
       
-      return validatedSummary;
+      if (!parsedSummary.projectOverview.title || parsedSummary.projectOverview.title.trim().length === 0) {
+        throw new Error('AI analysis could not determine a project title from the document');
+      }
+      
+      // Ensure otherComments field exists
+      if (!parsedSummary.otherComments) {
+        parsedSummary.otherComments = '';
+      }
+      
+      return parsedSummary;
     } catch (parseError) {
       console.error('Failed to parse JSON response:', parseError);
-      console.log('Problematic JSON:', jsonOnly.substring(0, 200));
-      return createIntelligentFallbackSummary(documentContent);
+      console.log('Problematic JSON (first 500 chars):', jsonOnly.substring(0, 500));
+      throw new Error(`AI response parsing failed: ${parseError instanceof Error ? parseError.message : 'Invalid JSON format'}`);
     }
   } catch (error) {
     console.error('Error generating summary:', error);
-    console.log('Using fallback content extraction...');
-    return createIntelligentFallbackSummary(documentContent);
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Failed to generate document summary - please check your document content and try again');
   }
 }
 
-function createBinaryFileFallbackSummary(fileInfo: string): StructuredSummary {
-  console.log('Creating binary file fallback summary...');
-  
-  // Extract file name and type from the binary file notification
-  const fileNameMatch = fileInfo.match(/File: (.+)/);
-  const fileName = fileNameMatch ? fileNameMatch[1] : 'Unknown Document';
-  
-  return {
-    projectOverview: {
-      title: `Document Analysis: ${fileName}`,
-      description: "This document appears to be a binary file (PDF or Office document). For complete analysis, please convert to plain text format or copy-paste the content directly.",
-      scope: "Document processing with limited text extraction capabilities",
-      objectives: [
-        "Provide document processing for binary files",
-        "Offer guidance for better document format",
-        "Enable basic analysis workflow",
-        "Support multiple document types"
-      ]
-    },
-    stakeholders: [
-      {
-        name: "Document Author",
-        role: "Content Creator",
-        responsibilities: ["Document creation", "Content accuracy", "Format selection"]
-      },
-      {
-        name: "System User",
-        role: "Analyst",
-        responsibilities: ["Document upload", "Content review", "Analysis validation"]
-      },
-      {
-        name: "System Administrator",
-        role: "Technical Support",
-        responsibilities: ["File processing support", "Format guidance", "System maintenance"]
-      }
-    ],
-    functionalRequirements: [
-      {
-        id: "REQ-001",
-        title: "Document Upload Processing",
-        description: "System shall accept and process various document formats including binary files",
-        priority: "High",
-        acceptanceCriteria: ["Files can be uploaded successfully", "Binary files are detected", "Users receive appropriate feedback"]
-      },
-      {
-        id: "REQ-002", 
-        title: "Format Guidance",
-        description: "System shall provide guidance for optimal document formats",
-        priority: "Medium",
-        acceptanceCriteria: ["Users receive format recommendations", "Alternative options are provided", "Clear instructions are given"]
-      }
-    ],
-    nonFunctionalRequirements: [
-      {
-        category: "Usability",
-        requirements: ["Clear error messages for binary files", "Helpful guidance for users", "Graceful handling of unsupported formats"]
-      },
-      {
-        category: "Compatibility",
-        requirements: ["Support for multiple file types", "Binary file detection", "Fallback processing capabilities"]
-      }
-    ],
-    userStories: [
-      {
-        id: "US-001",
-        asA: "User",
-        iWant: "to upload various document formats",
-        soThat: "I can analyze my business requirements regardless of format",
-        acceptanceCriteria: ["File upload works for multiple formats", "Clear feedback is provided", "Alternative options are suggested"],
-        priority: "High"
-      }
-    ],
-    businessRules: [
-      "Binary files are detected and handled gracefully",
-      "Users are provided with format optimization guidance",
-      "System attempts analysis even with limited text extraction"
-    ],
-    constraints: [
-      "Limited text extraction from binary formats",
-      "PDF processing requires specialized libraries",
-      "Office documents need format conversion for optimal results"
-    ],
-    assumptions: [
-      "Users can convert documents to text format if needed",
-      "Document content is meaningful for business analysis",
-      "Alternative formats are available to users"
-    ],
-    dependencies: [
-      "File upload system",
-      "Binary file detection algorithms",
-      "User guidance interface"
-    ]
-  };
-}
-
-export async function generateTestCases(summaryContent: StructuredSummary | string): Promise<TestCase[]> {
-  console.log('generateTestCases called with:', typeof summaryContent);
+export async function generateTestCases(summaryContent: StructuredSummary | string, regenerationOption?: string): Promise<TestCase[]> {
+  console.log('generateTestCases called with:', typeof summaryContent, 'regeneration option:', regenerationOption);
   
   const contentToAnalyze = typeof summaryContent === 'string' 
     ? summaryContent 
@@ -427,10 +400,123 @@ export async function generateTestCases(summaryContent: StructuredSummary | stri
 
   console.log('Content to analyze (first 500 chars):', contentToAnalyze.slice(0, 500));
 
+  // Validate input
+  if (!contentToAnalyze || contentToAnalyze.trim().length < 50) {
+    throw new Error('Summary content is too short or empty for test case generation');
+  }
+
+  // Create specialized prompt based on regeneration option
+  let specializedPrompt = '';
+  if (regenerationOption) {
+    switch (regenerationOption) {
+      case 'more-rigorous':
+        specializedPrompt = `
+SPECIAL INSTRUCTIONS: Generate MORE RIGOROUS test cases with:
+- Extensive edge cases and boundary testing
+- Negative test scenarios and error handling
+- Complex data validation scenarios
+- Multiple user role testing
+- Integration failure scenarios
+- Performance edge cases
+- Security vulnerability testing
+- Data corruption and recovery scenarios
+Generate 15-20 comprehensive test cases with detailed steps.`;
+        break;
+      case 'less-rigorous':
+        specializedPrompt = `
+SPECIAL INSTRUCTIONS: Generate BASIC test cases focusing on:
+- Core functionality and happy path scenarios
+- Essential user workflows
+- Basic validation testing
+- Primary use cases only
+- Simplified test steps
+Generate 5-8 essential test cases with clear, simple steps.`;
+        break;
+      case 'auth-flow':
+        specializedPrompt = `
+SPECIAL INSTRUCTIONS: Focus SPECIFICALLY on AUTHENTICATION & AUTHORIZATION:
+- Login/logout functionality
+- User registration and password management
+- Role-based access control
+- Session management
+- Password reset and recovery
+- Multi-factor authentication if applicable
+- Permission validation
+- Account lockout scenarios
+Generate test cases ONLY for authentication and authorization features.`;
+        break;
+      case 'ui-ux':
+        specializedPrompt = `
+SPECIAL INSTRUCTIONS: Focus on UI/UX TESTING:
+- User interface responsiveness
+- Form validation and user feedback
+- Navigation and user workflows
+- Accessibility testing
+- Cross-browser compatibility
+- Mobile responsiveness
+- User experience flows
+- Visual design validation
+Generate test cases focused on frontend and user experience.`;
+        break;
+      case 'api-integration':
+        specializedPrompt = `
+SPECIAL INSTRUCTIONS: Focus on API & INTEGRATION TESTING:
+- API endpoint testing
+- Data integration scenarios
+- Third-party service integration
+- Database connectivity
+- Data synchronization
+- API error handling
+- Request/response validation
+- System-to-system communication
+Generate test cases for APIs and system integrations.`;
+        break;
+      case 'performance':
+        specializedPrompt = `
+SPECIAL INSTRUCTIONS: Focus on PERFORMANCE TESTING:
+- Load testing scenarios
+- Stress testing under high volume
+- Response time validation
+- Concurrent user testing
+- Resource utilization
+- Database performance
+- Memory and CPU usage
+- Scalability testing
+Generate test cases focused on system performance and scalability.`;
+        break;
+      case 'security':
+        specializedPrompt = `
+SPECIAL INSTRUCTIONS: Focus on SECURITY TESTING:
+- Input validation and SQL injection
+- Cross-site scripting (XSS) prevention
+- Authentication bypass attempts
+- Authorization vulnerabilities
+- Data encryption validation
+- Sensitive data exposure
+- Session security
+- Access control testing
+Generate test cases focused on security vulnerabilities and protection.`;
+        break;
+      case 'mobile':
+        specializedPrompt = `
+SPECIAL INSTRUCTIONS: Focus on MOBILE TESTING:
+- Mobile device compatibility
+- Touch interface testing
+- Screen orientation changes
+- Mobile-specific features
+- App performance on mobile
+- Network connectivity scenarios
+- Battery usage impact
+- Mobile user experience
+Generate test cases specifically for mobile applications and responsive design.`;
+        break;
+    }
+  }
+
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      content: TEST_CASE_SYSTEM_PROMPT
+      content: TEST_CASE_SYSTEM_PROMPT + specializedPrompt
     },
     {
       role: 'user',
@@ -446,61 +532,111 @@ Remember: Respond with ONLY the JSON array, no markdown, no explanations.`
   try {
     console.log('Making API call for test case generation...');
     const response = await makeAPICall(messages);
-    console.log('Raw API response for test cases:', response.substring(0, 500) + '...');
+    console.log('Raw API response for test cases received, parsing...');
     
-    // Clean the response more aggressively
+    // More aggressive cleaning for messy content
     let cleanedResponse = response.trim();
     
     // Remove any markdown formatting
     cleanedResponse = cleanedResponse.replace(/```json\s*/g, '').replace(/```\s*/g, '');
     
-    // Find the JSON array
-    const arrayStart = cleanedResponse.indexOf('[');
-    const arrayEnd = cleanedResponse.lastIndexOf(']') + 1;
+    // Remove common AI prefixes more aggressively
+    const prefixPatterns = [
+      /^Here\s+is\s+the\s+JSON\s*:?\s*/i,
+      /^Here's\s+the\s+JSON\s*:?\s*/i,
+      /^Here\s+are\s+the\s+test\s+cases\s*:?\s*/i,
+      /^Based\s+on\s+the\s+requirements\s*:?\s*/i,
+      /^Test\s+cases\s*:?\s*/i
+    ];
     
-    if (arrayStart === -1 || arrayEnd === 0) {
-      console.warn('No JSON array found in response, using fallback.');
-      return createIntelligentFallbackTestCases(summaryContent);
+    for (const pattern of prefixPatterns) {
+      cleanedResponse = cleanedResponse.replace(pattern, '');
+    }
+    
+    // Find the JSON array more robustly
+    const arrayStart = cleanedResponse.indexOf('[');
+    if (arrayStart === -1) {
+      throw new Error('AI response does not contain a valid JSON array - no opening bracket found');
+    }
+    
+    // Find the matching closing bracket by counting brackets
+    let bracketCount = 0;
+    let arrayEnd = -1;
+    
+    for (let i = arrayStart; i < cleanedResponse.length; i++) {
+      if (cleanedResponse[i] === '[') {
+        bracketCount++;
+      } else if (cleanedResponse[i] === ']') {
+        bracketCount--;
+        if (bracketCount === 0) {
+          arrayEnd = i + 1;
+          break;
+        }
+      }
+    }
+    
+    if (arrayEnd === -1) {
+      throw new Error('AI response contains malformed JSON array - no matching closing bracket found');
     }
     
     const jsonOnly = cleanedResponse.substring(arrayStart, arrayEnd);
+    console.log('Extracted JSON array length:', jsonOnly.length);
     
     try {
       const parsedTestCases = JSON.parse(jsonOnly) as TestCase[];
       console.log('Successfully parsed test cases from AI:', parsedTestCases.length, 'test cases');
       
-      // Validate and enhance each test case
-      const validatedTestCases = parsedTestCases.map((testCase, index) => ({
-        id: testCase.id || `TC-${String(index + 1).padStart(3, '0')}`,
-        title: testCase.title || `Test Case ${index + 1}`,
-        description: testCase.description || 'Verify system functionality',
-        category: testCase.category || 'General',
-        priority: ['Critical', 'High', 'Medium', 'Low'].includes(testCase.priority) ? testCase.priority : 'Medium',
-        type: ['Functional', 'Non-Functional', 'Integration', 'UI/UX', 'Security', 'Performance'].includes(testCase.type) ? testCase.type : 'Functional',
-        preconditions: Array.isArray(testCase.preconditions) ? testCase.preconditions : ['System is accessible'],
-        steps: Array.isArray(testCase.steps) ? testCase.steps.map((step, stepIndex) => ({
-          stepNumber: step.stepNumber || stepIndex + 1,
-          action: step.action || 'Perform action',
-          expectedResult: step.expectedResult || 'Expected result'
-        })) : [],
-        expectedOutcome: testCase.expectedOutcome || 'System functions as expected',
-        testData: Array.isArray(testCase.testData) ? testCase.testData : ['Test data'],
-        status: 'Not Started' as const,
-        estimatedTime: testCase.estimatedTime || '30 minutes',
-        relatedRequirement: testCase.relatedRequirement || ''
-      }));
+      // Validate the response
+      if (!Array.isArray(parsedTestCases) || parsedTestCases.length === 0) {
+        throw new Error('AI did not generate any test cases from the requirements');
+      }
+      
+      // Validate and clean each test case
+      const validatedTestCases = parsedTestCases.map((testCase, index) => {
+        if (!testCase.title || !testCase.description) {
+          throw new Error(`Test case ${index + 1} is missing required fields (title or description)`);
+        }
+        
+        return {
+          id: testCase.id || `TC-${String(index + 1).padStart(3, '0')}`,
+          title: testCase.title,
+          description: testCase.description,
+          category: testCase.category || 'General',
+          priority: ['Critical', 'High', 'Medium', 'Low'].includes(testCase.priority) ? testCase.priority : 'Medium',
+          type: ['Functional', 'Non-Functional', 'Integration', 'UI/UX', 'Security', 'Performance'].includes(testCase.type) ? testCase.type : 'Functional',
+          preconditions: Array.isArray(testCase.preconditions) && testCase.preconditions.length > 0 ? testCase.preconditions : ['System is accessible and user has appropriate permissions'],
+          steps: Array.isArray(testCase.steps) && testCase.steps.length > 0 ? testCase.steps.map((step, stepIndex) => ({
+            stepNumber: step.stepNumber || stepIndex + 1,
+            action: step.action || 'Perform required action',
+            expectedResult: step.expectedResult || 'Expected result should be achieved'
+          })) : [
+            {
+              stepNumber: 1,
+              action: 'Execute the test scenario',
+              expectedResult: 'System behaves as expected'
+            }
+          ],
+          expectedOutcome: testCase.expectedOutcome || 'Test passes successfully',
+          testData: Array.isArray(testCase.testData) && testCase.testData.length > 0 ? testCase.testData : ['Test data as required'],
+          status: 'Not Started' as const,
+          estimatedTime: testCase.estimatedTime || '30 minutes',
+          relatedRequirement: testCase.relatedRequirement || ''
+        };
+      });
       
       console.log('Validated test cases:', validatedTestCases.length, 'test cases ready');
-      return validatedTestCases.length > 0 ? validatedTestCases : createIntelligentFallbackTestCases(summaryContent);
+      return validatedTestCases;
     } catch (parseError) {
       console.error('Failed to parse JSON response:', parseError);
-      console.log('Problematic JSON:', jsonOnly.substring(0, 200));
-      return createIntelligentFallbackTestCases(summaryContent);
+      console.log('Problematic JSON (first 500 chars):', jsonOnly.substring(0, 500));
+      throw new Error(`Test case parsing failed: ${parseError instanceof Error ? parseError.message : 'Invalid JSON format'}`);
     }
   } catch (error) {
     console.error('Error generating test cases:', error);
-    console.log('Using fallback test case generation');
-    return createIntelligentFallbackTestCases(summaryContent);
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Failed to generate test cases - please check your requirements and try again');
   }
 }
 
@@ -520,7 +656,8 @@ function validateAndEnhanceSummary(summary: StructuredSummary, originalContent: 
     businessRules: summary.businessRules?.length > 0 ? summary.businessRules : extractBusinessRules(originalContent),
     constraints: summary.constraints?.length > 0 ? summary.constraints : extractConstraints(originalContent),
     assumptions: summary.assumptions?.length > 0 ? summary.assumptions : extractAssumptions(originalContent),
-    dependencies: summary.dependencies?.length > 0 ? summary.dependencies : extractDependencies(originalContent)
+    dependencies: summary.dependencies?.length > 0 ? summary.dependencies : extractDependencies(originalContent),
+    otherComments: summary.otherComments || extractOtherComments(originalContent)
   };
   
   return enhanced;
@@ -543,7 +680,8 @@ function createIntelligentFallbackSummary(documentContent: string): StructuredSu
     businessRules: extractBusinessRules(documentContent),
     constraints: extractConstraints(documentContent),
     assumptions: extractAssumptions(documentContent),
-    dependencies: extractDependencies(documentContent)
+    dependencies: extractDependencies(documentContent),
+    otherComments: extractOtherComments(documentContent)
   };
 }
 
@@ -983,312 +1121,176 @@ function inferBenefit(description: string): string {
   return 'I can complete my tasks effectively';
 }
 
-function createIntelligentFallbackTestCases(summaryContent: StructuredSummary | string): TestCase[] {
-  console.log('Creating intelligent fallback test cases...');
+function extractOtherComments(content: string): string {
+  const otherComments: string[] = [];
   
-  // If we have structured content, create test cases based on functional requirements
-  if (typeof summaryContent === 'object' && summaryContent.functionalRequirements) {
-    const testCases: TestCase[] = [];
+  // Define patterns for content that doesn't fit structured fields
+  const patterns = [
+    // Technical specifications and implementation details
+    {
+      name: 'Technical Specifications',
+      regex: /technical\s*(specifications?|details?|requirements?)[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Implementation Notes',
+      regex: /implementation[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Architecture Details',
+      regex: /architecture[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
     
-    summaryContent.functionalRequirements.forEach((req, reqIndex) => {
-      // Create positive test case
-      testCases.push({
-        id: `TC-${String(testCases.length + 1).padStart(3, '0')}`,
-        title: `Test ${req.title} - Positive Flow`,
-        description: `Verify that ${req.description}`,
-        category: req.title.split(' ')[0] || 'General',
-        priority: req.priority,
-        type: 'Functional',
-        preconditions: [
-          "System is accessible and running",
-          "User has appropriate permissions",
-          "Test data is available"
-        ],
-        steps: [
-          {
-            stepNumber: 1,
-            action: `Log into the system with valid credentials`,
-            expectedResult: "User successfully logs into the system"
-          },
-          {
-            stepNumber: 2,
-            action: `Navigate to ${req.title.toLowerCase()} section`,
-            expectedResult: `${req.title} feature is accessible and loads properly`
-          },
-          {
-            stepNumber: 3,
-            action: `Perform the required operation for ${req.title.toLowerCase()}`,
-            expectedResult: "Operation completes successfully without errors"
-          },
-          {
-            stepNumber: 4,
-            action: "Verify the results match expected behavior",
-            expectedResult: req.acceptanceCriteria[0] || "Expected result is achieved and data is correctly processed"
-          },
-          {
-            stepNumber: 5,
-            action: "Log out of the system",
-            expectedResult: "User successfully logs out"
-          }
-        ],
-        expectedOutcome: req.acceptanceCriteria[0] || `${req.title} functionality works as specified in the requirement`,
-        testData: [
-          "Valid user credentials",
-          "Test data for the specific feature",
-          "Expected output values"
-        ],
-        status: "Not Started",
-        estimatedTime: "45 minutes",
-        relatedRequirement: req.id
-      });
-
-      // Create negative test case
-      testCases.push({
-        id: `TC-${String(testCases.length + 1).padStart(3, '0')}`,
-        title: `Test ${req.title} - Negative Flow`,
-        description: `Verify error handling and validation for ${req.title.toLowerCase()}`,
-        category: req.title.split(' ')[0] || 'General',
-        priority: req.priority === 'Critical' ? 'High' : 'Medium',
-        type: 'Functional',
-        preconditions: [
-          "System is accessible and running",
-          "User has appropriate permissions",
-          "Invalid test data is prepared"
-        ],
-        steps: [
-          {
-            stepNumber: 1,
-            action: `Log into the system with valid credentials`,
-            expectedResult: "User successfully logs into the system"
-          },
-          {
-            stepNumber: 2,
-            action: `Navigate to ${req.title.toLowerCase()} section`,
-            expectedResult: `${req.title} feature is accessible`
-          },
-          {
-            stepNumber: 3,
-            action: `Attempt operation with invalid or missing data`,
-            expectedResult: "System displays appropriate error messages"
-          },
-          {
-            stepNumber: 4,
-            action: "Verify system handles errors gracefully",
-            expectedResult: "System prevents invalid operations and maintains data integrity"
-          }
-        ],
-        expectedOutcome: `System properly validates input and provides clear error messages for ${req.title.toLowerCase()}`,
-        testData: [
-          "Invalid input data",
-          "Missing required fields",
-          "Boundary test values"
-        ],
-        status: "Not Started",
-        estimatedTime: "30 minutes",
-        relatedRequirement: req.id
-      });
-    });
-
-    // Add some additional integration and UI test cases
-    if (summaryContent.userStories.length > 0) {
-      summaryContent.userStories.slice(0, 3).forEach((story, index) => {
-        testCases.push({
-          id: `TC-${String(testCases.length + 1).padStart(3, '0')}`,
-          title: `User Story Test: ${story.asA} - ${story.iWant}`,
-          description: `End-to-end test for user story: As a ${story.asA}, I want ${story.iWant} so that ${story.soThat}`,
-          category: "User Experience",
-          priority: story.priority,
-          type: "Integration",
-          preconditions: [
-            `${story.asA} has system access`,
-            "System is in normal operating state",
-            "Required test data exists"
-          ],
-          steps: [
-            {
-              stepNumber: 1,
-              action: `Log in as ${story.asA}`,
-              expectedResult: `${story.asA} successfully accesses the system`
-            },
-            {
-              stepNumber: 2,
-              action: `Navigate to complete the user story: ${story.iWant}`,
-              expectedResult: "User can access the required functionality"
-            },
-            {
-              stepNumber: 3,
-              action: "Complete the entire user journey end-to-end",
-              expectedResult: `User successfully ${story.iWant.replace('to ', '')}`
-            },
-            {
-              stepNumber: 4,
-              action: "Verify the benefit is achieved",
-              expectedResult: story.soThat
-            }
-          ],
-          expectedOutcome: `Complete user story is satisfied: ${story.asA} can ${story.iWant} so that ${story.soThat}`,
-          testData: [
-            `${story.asA} test account`,
-            "Realistic test scenario data",
-            "Expected outcome data"
-          ],
-          status: "Not Started",
-          estimatedTime: "60 minutes",
-          relatedRequirement: story.id
-        });
-      });
-    }
-
-    console.log(`Generated ${testCases.length} fallback test cases from structured content`);
-    return testCases;
-  }
-  
-  // Default fallback test cases when no structured content is available
-  console.log('Using default fallback test cases');
-  const testCases: TestCase[] = [
+    // Risk and compliance
     {
-      id: "TC-001",
-      title: "Employee Profile Management - Create Profile",
-      description: "Verify employee can create and manage their profile information",
-      category: "Profile Management",
-      priority: "High",
-      type: "Functional",
-      preconditions: [
-        "User is logged into the system",
-        "User has employee role permissions",
-        "System is operational"
-      ],
-      steps: [
-        {
-          stepNumber: 1,
-          action: "Navigate to employee profile creation page",
-          expectedResult: "Profile creation form loads successfully"
-        },
-        {
-          stepNumber: 2,
-          action: "Fill in all required profile information (personal details, job info, etc.)",
-          expectedResult: "Form accepts valid input for all fields"
-        },
-        {
-          stepNumber: 3,
-          action: "Submit the profile creation form",
-          expectedResult: "Profile is created successfully with confirmation message"
-        },
-        {
-          stepNumber: 4,
-          action: "Verify profile information is stored correctly",
-          expectedResult: "All entered information is displayed accurately in the profile"
-        }
-      ],
-      expectedOutcome: "Employee profile is successfully created with all required information",
-      testData: [
-        "Valid employee personal information",
-        "Job details and department info",
-        "Emergency contact information"
-      ],
-      status: "Not Started",
-      estimatedTime: "45 minutes",
-      relatedRequirement: "REQ-001"
+      name: 'Risk Considerations',
+      regex: /risks?[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
     },
     {
-      id: "TC-002",
-      title: "Leave Request Submission and Approval",
-      description: "Verify complete leave request workflow from submission to approval",
-      category: "Leave Management",
-      priority: "High",
-      type: "Functional",
-      preconditions: [
-        "Employee is logged in with valid account",
-        "Employee has available leave balance",
-        "Manager account exists for approval"
-      ],
-      steps: [
-        {
-          stepNumber: 1,
-          action: "Navigate to leave request page",
-          expectedResult: "Leave request form is displayed with current balance"
-        },
-        {
-          stepNumber: 2,
-          action: "Fill in leave request details (dates, type, reason)",
-          expectedResult: "Form accepts valid leave request data"
-        },
-        {
-          stepNumber: 3,
-          action: "Submit leave request",
-          expectedResult: "Request is submitted and confirmation is displayed"
-        },
-        {
-          stepNumber: 4,
-          action: "Log in as manager and review the leave request",
-          expectedResult: "Manager can view pending leave request with all details"
-        },
-        {
-          stepNumber: 5,
-          action: "Approve the leave request",
-          expectedResult: "Leave request is approved and employee is notified"
-        }
-      ],
-      expectedOutcome: "Complete leave request workflow functions properly from submission to approval",
-      testData: [
-        "Valid leave dates within policy",
-        "Appropriate leave type",
-        "Manager approval credentials"
-      ],
-      status: "Not Started",
-      estimatedTime: "60 minutes",
-      relatedRequirement: "REQ-005"
+      name: 'Compliance Requirements',
+      regex: /(compliance|regulatory)[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
     },
     {
-      id: "TC-003",
-      title: "Performance Review Management",
-      description: "Verify performance review creation, completion, and tracking",
-      category: "Performance Management",
-      priority: "Medium",
-      type: "Functional",
-      preconditions: [
-        "Manager is logged into the system",
-        "Employee records exist",
-        "Performance review template is configured"
-      ],
-      steps: [
-        {
-          stepNumber: 1,
-          action: "Navigate to performance review management section",
-          expectedResult: "Performance review dashboard loads with employee list"
-        },
-        {
-          stepNumber: 2,
-          action: "Create new performance review for an employee",
-          expectedResult: "Review form opens with employee details pre-populated"
-        },
-        {
-          stepNumber: 3,
-          action: "Complete all sections of the performance review",
-          expectedResult: "All review sections are completed and saved"
-        },
-        {
-          stepNumber: 4,
-          action: "Submit review and notify employee",
-          expectedResult: "Review is submitted and employee receives notification"
-        },
-        {
-          stepNumber: 5,
-          action: "Verify review appears in employee's record",
-          expectedResult: "Completed review is visible in employee's performance history"
-        }
-      ],
-      expectedOutcome: "Performance review process works end-to-end with proper tracking and notifications",
-      testData: [
-        "Employee performance data",
-        "Review criteria and ratings",
-        "Goal setting information"
-      ],
-      status: "Not Started",
-      estimatedTime: "50 minutes",
-      relatedRequirement: "REQ-010"
+      name: 'Security Considerations',
+      regex: /security\s*(considerations?|notes?)[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    
+    // Project management aspects
+    {
+      name: 'Timeline Information',
+      regex: /(timeline|schedule|phases?)[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Budget Information',
+      regex: /(budget|cost|resources?)[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Milestones',
+      regex: /milestones?[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    
+    // Integration and migration
+    {
+      name: 'Integration Requirements',
+      regex: /integration\s*(requirements?|details?)[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Data Migration',
+      regex: /migration[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Legacy System Notes',
+      regex: /legacy[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    
+    // Support and maintenance
+    {
+      name: 'Training Requirements',
+      regex: /training[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Support Requirements',
+      regex: /support[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Maintenance Considerations',
+      regex: /maintenance[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    
+    // Performance and monitoring
+    {
+      name: 'Performance Metrics',
+      regex: /(kpi|metrics?|performance\s*indicators?)[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Monitoring Requirements',
+      regex: /monitoring[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    
+    // Notes and additional context
+    {
+      name: 'Additional Notes',
+      regex: /(notes?|additional\s*information)[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Special Considerations',
+      regex: /special\s*considerations?[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Out of Scope',
+      regex: /(out\s*of\s*scope|not\s*included)[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
+    },
+    {
+      name: 'Future Enhancements',
+      regex: /(future|enhancements?|roadmap)[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/i
     }
   ];
   
-  return testCases;
+  // Extract content for each pattern
+  patterns.forEach(pattern => {
+    const match = content.match(pattern.regex);
+    if (match) {
+      const extractedContent = match[match.length - 1]; // Get the last capture group
+      if (extractedContent && extractedContent.trim().length > 20) {
+        const cleanContent = extractedContent
+          .trim()
+          .replace(/[*#-]/g, '') // Remove markdown formatting
+          .replace(/\s+/g, ' ') // Normalize whitespace
+          .substring(0, 500); // Limit length
+        
+        if (cleanContent.length > 20) {
+          otherComments.push(`**${pattern.name}:** ${cleanContent}`);
+        }
+      }
+    }
+  });
+  
+  // Look for numbered sections that might not fit standard categories
+  const numberedSections = content.match(/^\d+\.\s*[^:\n\r]+[:\s]*([^\n\r#]+(?:\n[^#\n\r]+)*)/gm);
+  if (numberedSections) {
+    numberedSections.forEach(section => {
+      const sectionTitle = section.match(/^\d+\.\s*([^:\n\r]+)/);
+      if (sectionTitle) {
+        const title = sectionTitle[1].trim();
+        // Only include if it doesn't match known structured categories
+        const isStructuredCategory = [
+          'requirements', 'stakeholder', 'user stories', 'business rules', 
+          'constraint', 'assumption', 'dependencies', 'overview', 'objective'
+        ].some(category => title.toLowerCase().includes(category));
+        
+        if (!isStructuredCategory && section.length > 50) {
+          const cleanSection = section
+            .replace(/^\d+\.\s*/, '')
+            .trim()
+            .replace(/\s+/g, ' ')
+            .substring(0, 300);
+          
+          if (cleanSection.length > 30) {
+            otherComments.push(`**${title}:** ${cleanSection}`);
+          }
+        }
+      }
+    });
+  }
+  
+  // Look for any remaining bullet points in unstructured sections
+  const remainingBullets = content.match(/[-*•]\s*([^\n\r]{20,})/g);
+  if (remainingBullets && otherComments.length < 3) {
+    remainingBullets.slice(0, 3).forEach(bullet => {
+      const cleanBullet = bullet
+        .replace(/[-*•]\s*/, '')
+        .trim()
+        .substring(0, 200);
+      
+      if (cleanBullet.length > 20) {
+        otherComments.push(`• ${cleanBullet}`);
+      }
+    });
+  }
+  
+  // Return combined comments or empty string
+  if (otherComments.length > 0) {
+    return otherComments.join('\n\n');
+  }
+  
+  return '';
 }

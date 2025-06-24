@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, ArrowRight, ArrowLeft, Loader } from 'lucide-react';
+import { ClipboardList, ArrowRight, ArrowLeft, Loader, Sparkles, Zap, CheckCircle, Target, Users, FileText, Brain } from 'lucide-react';
 import Button from '../../components/UI/Button';
 import Card from '../../components/UI/Card';
 import { useDocumentStore } from '../../store/documentStore';
@@ -14,17 +14,9 @@ const TestCaseGeneration: React.FC = () => {
   useEffect(() => {
     // Redirect if no summary is available
     if (!currentSummary) {
-      console.warn('No current summary available, redirecting to home');
       navigate('/');
       return;
     }
-    
-    console.log('Current summary structure:', {
-      hasStructuredContent: !!currentSummary.structuredContent,
-      hasEditedStructuredContent: !!currentSummary.editedStructuredContent,
-      hasContent: !!currentSummary.content,
-      hasEditedContent: !!currentSummary.editedContent
-    });
   }, [currentSummary, navigate]);
   
   const handleGenerateTestCases = async () => {
@@ -90,95 +82,147 @@ const TestCaseGeneration: React.FC = () => {
   }
   
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="mb-8 text-center">
-        <h1 className="text-3xl font-bold mb-4">Generate Test Cases</h1>
-        <p className="text-[var(--text-secondary)] max-w-2xl mx-auto">
-          Create comprehensive test cases based on the document summary.
-          These test cases will be used for test management.
+    <div className="max-w-6xl mx-auto space-y-8">
+      {/* Hero Section */}
+      <div className="text-center space-y-4 py-6">
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-purple-50 text-purple-700 rounded-full text-sm font-medium border border-purple-200">
+          <Brain size={14} />
+          Test Case Generation
+        </div>
+        <h1 className="text-balance max-w-4xl mx-auto">
+          Generate Test Cases
+        </h1>
+        <p className="text-lg max-w-2xl mx-auto text-balance text-[var(--text-secondary)]">
+          Transform your analyzed requirements into detailed, actionable test cases
         </p>
       </div>
       
-      <Card className="mb-8">
-        <div className="flex items-center mb-6">
-          <div className="bg-[var(--secondary)] bg-opacity-10 p-2 rounded-lg mr-4">
-            <ClipboardList size={24} className="text-[var(--secondary)]" />
+      {/* Main Generation Card */}
+      <div className="card card-spacious">
+        <div className="section-header">
+          <div className="section-icon">
+            <ClipboardList size={24} />
           </div>
           <div>
-            <h2 className="text-xl font-semibold">Test Case Generation</h2>
-            <p className="text-sm text-[var(--text-secondary)]">
-              Our AI will create test cases based on your document summary
-            </p>
+            <h2 className="gradient-text">Test Case Generation</h2>
+            <p className="mt-2">Generate comprehensive test cases from your requirements analysis</p>
           </div>
         </div>
         
-        <div className="bg-gray-50 p-6 rounded-lg mb-6">
-          <h3 className="text-lg font-medium mb-3">Summary Preview</h3>
-          <div className="max-h-48 overflow-y-auto text-sm text-[var(--text-secondary)]">
-            {currentSummary.structuredContent ? (
-              <div className="space-y-2">
-                <div>
-                  <strong>Project:</strong> {currentSummary.structuredContent.projectOverview.title}
-                </div>
-                <div>
-                  <strong>Requirements:</strong> {currentSummary.structuredContent.functionalRequirements.length} functional requirements
-                </div>
-                <div>
-                  <strong>User Stories:</strong> {currentSummary.structuredContent.userStories.length} user stories
-                </div>
-                <div>
-                  <strong>Stakeholders:</strong> {currentSummary.structuredContent.stakeholders.length} stakeholders identified
-                </div>
-                <div className="mt-3 p-3 bg-blue-50 rounded">
-                  <div className="text-xs text-blue-700">
-                    Test cases will be generated based on the structured analysis of your business requirements.
+        {/* Summary Preview Card */}
+        <div className="content-section">
+          <div className="info-card border-blue-200 bg-blue-50">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center">
+                <FileText size={16} />
+              </div>
+              <h3 className="font-semibold text-blue-900">Requirements Summary</h3>
+            </div>
+            
+            <div>
+              {currentSummary.structuredContent ? (
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div className="info-card bg-white/60 border-blue-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Target size={16} className="text-blue-600" />
+                        <strong className="text-blue-900">Project Overview</strong>
+                      </div>
+                      <p className="text-sm text-blue-800">{currentSummary.structuredContent.projectOverview.title}</p>
+                      <p className="text-xs text-blue-700 mt-2">{currentSummary.structuredContent.projectOverview.description}</p>
+                    </div>
+                    
+                    <div className="info-card bg-white/60 border-green-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <CheckCircle size={16} className="text-green-600" />
+                        <strong className="text-green-900">Functional Requirements</strong>
+                      </div>
+                      <p className="text-sm text-green-800">{currentSummary.structuredContent.functionalRequirements.length} requirements identified</p>
+                      {currentSummary.structuredContent.functionalRequirements.slice(0, 3).map((req, index) => (
+                        <div key={index} className="text-xs text-green-700 mt-1">
+                          • {req.title}
+                        </div>
+                      ))}
+                      {currentSummary.structuredContent.functionalRequirements.length > 3 && (
+                        <div className="text-xs text-green-600 mt-1">
+                          +{currentSummary.structuredContent.functionalRequirements.length - 3} more requirements
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div className="info-card bg-white/60 border-purple-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Users size={16} className="text-purple-600" />
+                        <strong className="text-purple-900">User Stories</strong>
+                      </div>
+                      <p className="text-sm text-purple-800">{currentSummary.structuredContent.userStories.length} user stories defined</p>
+                      {currentSummary.structuredContent.userStories.slice(0, 2).map((story, index) => (
+                        <div key={index} className="text-xs text-purple-700 mt-1">
+                          • As a {story.asA}, I want {story.iWant}
+                        </div>
+                      ))}
+                      {currentSummary.structuredContent.userStories.length > 2 && (
+                        <div className="text-xs text-purple-600 mt-1">
+                          +{currentSummary.structuredContent.userStories.length - 2} more user stories
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="info-card bg-white/60 border-amber-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Users size={16} className="text-amber-600" />
+                        <strong className="text-amber-900">Stakeholders</strong>
+                      </div>
+                      <p className="text-sm text-amber-800">{currentSummary.structuredContent.stakeholders.length} stakeholders identified</p>
+                      {currentSummary.structuredContent.stakeholders.slice(0, 3).map((stakeholder, index) => (
+                        <div key={index} className="text-xs text-amber-700 mt-1">
+                          • {stakeholder.name} - {stakeholder.role}
+                        </div>
+                      ))}
+                      {currentSummary.structuredContent.stakeholders.length > 3 && (
+                        <div className="text-xs text-amber-600 mt-1">
+                          +{currentSummary.structuredContent.stakeholders.length - 3} more stakeholders
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : (
-              <div className="whitespace-pre-wrap">
-                {currentSummary.editedContent || currentSummary.content}
-              </div>
-            )}
+              ) : (
+                <div className="info-card bg-white/60">
+                  <div className="text-sm text-gray-700 whitespace-pre-wrap">
+                    {currentSummary.editedContent || currentSummary.content}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
         
-        <div className="bg-[var(--secondary)] bg-opacity-5 p-6 rounded-lg mb-6">
-          <h3 className="text-lg font-medium mb-3">What to Expect</h3>
-          <p className="text-sm text-[var(--text-secondary)] mb-4">
-            The test case generation will:
-          </p>
-          
-          <ul className="space-y-2 text-sm text-[var(--text-secondary)]">
-            <li className="flex items-start">
-              <span className="bg-[var(--secondary)] rounded-full h-2 w-2 mt-1.5 mr-2"></span>
-              <span>Create test cases with titles, descriptions, and step-by-step instructions</span>
-            </li>
-            <li className="flex items-start">
-              <span className="bg-[var(--secondary)] rounded-full h-2 w-2 mt-1.5 mr-2"></span>
-              <span>Assign priorities to each test case (Low, Medium, High, Critical)</span>
-            </li>
-            <li className="flex items-start">
-              <span className="bg-[var(--secondary)] rounded-full h-2 w-2 mt-1.5 mr-2"></span>
-              <span>Cover functional requirements, edge cases, and validation scenarios</span>
-            </li>
-            <li className="flex items-start">
-              <span className="bg-[var(--secondary)] rounded-full h-2 w-2 mt-1.5 mr-2"></span>
-              <span>Specify expected results for each test case</span>
-            </li>
-          </ul>
-        </div>
-        
+        {/* Error Display */}
         {error && (
-          <div className="mt-4 p-3 bg-[var(--error)] bg-opacity-10 text-[var(--error)] rounded-lg text-sm">
-            {error}
+          <div className="content-section">
+            <div className="status-message status-error">
+              <div className="flex-shrink-0">
+                <div className="w-6 h-6 bg-red-100 text-red-600 rounded-full flex items-center justify-center">
+                  <span className="text-xs font-bold">!</span>
+                </div>
+              </div>
+              <div>
+                <p className="font-semibold">Generation Failed</p>
+                <p className="text-sm mt-1">{error}</p>
+              </div>
+            </div>
           </div>
         )}
         
-        <div className="mt-8 flex justify-between">
+        {/* Action Buttons */}
+        <div className="flex justify-between items-center pt-4">
           <Button
             variant="outline"
             onClick={handleBack}
+            className="flex items-center gap-2"
           >
             <ArrowLeft size={16} />
             Back to Summary
@@ -187,21 +231,70 @@ const TestCaseGeneration: React.FC = () => {
           <Button
             onClick={handleGenerateTestCases}
             isLoading={isProcessing}
+            className="btn-primary"
+            size="lg"
           >
             {isProcessing ? (
               <>
-                <Loader size={16} className="animate-spin" />
-                Generating Test Cases...
+                <Loader size={18} className="animate-spin" />
+                Generating...
               </>
             ) : (
               <>
+                <Brain size={18} />
                 Generate Test Cases
-                <ArrowRight size={16} />
+                <ArrowRight size={18} />
               </>
             )}
           </Button>
         </div>
-      </Card>
+      </div>
+
+      {/* What You'll Get */}
+      <div className="card">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-purple-100 text-purple-600 rounded-lg flex items-center justify-center">
+            <Zap size={20} />
+          </div>
+          <h3 className="font-semibold">What You'll Get</h3>
+        </div>
+        
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="text-lg">📝</div>
+              <div>
+                <h4 className="font-semibold text-sm mb-1">Detailed Test Cases</h4>
+                <p className="text-xs text-[var(--text-secondary)]">Complete test cases with step-by-step instructions</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="text-lg">🎯</div>
+              <div>
+                <h4 className="font-semibold text-sm mb-1">Priority Assignment</h4>
+                <p className="text-xs text-[var(--text-secondary)]">Intelligent priority levels based on requirements</p>
+              </div>
+            </div>
+          </div>
+          
+          <div className="space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="text-lg">🔍</div>
+              <div>
+                <h4 className="font-semibold text-sm mb-1">Comprehensive Coverage</h4>
+                <p className="text-xs text-[var(--text-secondary)]">Functional requirements and validation scenarios</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="text-lg">✅</div>
+              <div>
+                <h4 className="font-semibold text-sm mb-1">Expected Results</h4>
+                <p className="text-xs text-[var(--text-secondary)]">Clear expected outcomes and acceptance criteria</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

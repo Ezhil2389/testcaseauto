@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, File, X, FileText, Archive, MoreHorizontal } from 'lucide-react';
+import { Upload, File, X, FileText, Archive, MoreHorizontal, Presentation } from 'lucide-react';
 import { createDocumentFromFile, formatFileSize } from '../../utils/fileUtils';
 import { useDocumentStore } from '../../store/documentStore';
 
@@ -10,10 +10,14 @@ const FileUploadZone: React.FC = () => {
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     for (const file of acceptedFiles) {
       try {
+        console.log(`Processing file: ${file.name}`);
         const document = await createDocumentFromFile(file);
         addDocument(document);
+        console.log(`Successfully added document: ${file.name}`);
       } catch (error) {
         console.error('Error processing file:', error);
+        // You might want to show a toast notification here
+        alert(`Failed to process ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
   }, [addDocument]);
@@ -22,12 +26,18 @@ const FileUploadZone: React.FC = () => {
     onDrop,
     accept: {
       'text/plain': ['.txt'],
+      'text/markdown': ['.md'],
       'application/pdf': ['.pdf'],
       'application/msword': ['.doc'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
       'application/vnd.ms-excel': ['.xls'],
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-    }
+      'application/vnd.ms-powerpoint': ['.ppt'],
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+      'text/csv': ['.csv']
+    },
+    maxSize: 50 * 1024 * 1024, // 50MB
+    multiple: true
   });
 
   const getFileIcon = (fileName: string) => {
@@ -43,82 +53,94 @@ const FileUploadZone: React.FC = () => {
       case 'xls':
       case 'xlsx':
         return <Archive {...iconProps} className="text-green-600" />;
+      case 'ppt':
+      case 'pptx':
+        return <Presentation {...iconProps} className="text-orange-600" />;
       case 'txt':
+      case 'md':
         return <File {...iconProps} className="text-gray-600" />;
+      case 'csv':
+        return <Archive {...iconProps} className="text-purple-600" />;
       default:
         return <File {...iconProps} className="text-gray-600" />;
     }
   };
-  
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Upload Zone */}
       <div
         {...getRootProps()}
-        className={`upload-zone ${isDragActive ? 'active' : ''}`}
+        className={`
+          border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
+          ${isDragActive 
+            ? 'border-blue-500 bg-blue-50' 
+            : 'border-gray-300 hover:border-gray-400'
+          }
+        `}
       >
         <input {...getInputProps()} />
-        
-        <div className="text-center">
-          <Upload 
-            size={40} 
-            className={`mx-auto mb-4 transition-colors duration-300 ${
-              isDragActive ? 'text-[var(--primary)]' : 'text-[var(--text-tertiary)]'
-            }`} 
-          />
-          
-          <h3 className="text-lg font-semibold mb-2 text-[var(--text-primary)]">
-            {isDragActive ? 'Drop files here' : 'Drag & drop files here'}
-          </h3>
-          
-          <p className="text-[var(--text-secondary)] mb-4">
-            or click to browse your computer
-          </p>
-          
-          <div className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-md text-sm text-[var(--text-tertiary)]">
-            <MoreHorizontal size={14} />
-            <span>PDF, DOC, DOCX, XLS, XLSX, TXT</span>
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
+            <Upload size={32} className="text-gray-500" />
           </div>
+          
+          {isDragActive ? (
+            <div>
+              <p className="text-lg font-medium text-blue-600">Drop files here...</p>
+              <p className="text-sm text-blue-500">Release to upload your documents</p>
+            </div>
+          ) : (
+            <div>
+              <p className="text-lg font-medium">Upload Business Requirements</p>
+              <p className="text-sm text-gray-500 mb-2">
+                Drag and drop files here, or click to browse
+              </p>
+              <p className="text-xs text-gray-400">
+                Supports: PDF, Word, Excel, PowerPoint, Text files (up to 50MB each)
+              </p>
+            </div>
+          )}
         </div>
       </div>
-      
-      {/* Uploaded Files */}
+
+      {/* Uploaded Files List */}
       {documents.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-[var(--text-primary)]">
-              Uploaded Files
-            </h3>
-            <span className="text-sm text-[var(--text-tertiary)] bg-gray-100 px-3 py-1.5 rounded-md font-medium">
-              {documents.length} file{documents.length > 1 ? 's' : ''}
-            </span>
-          </div>
-          
-          <div className="space-y-3">
+        <div className="space-y-3">
+          <h4 className="font-medium text-gray-900">Uploaded Documents ({documents.length})</h4>
+          <div className="space-y-2">
             {documents.map((doc) => (
-              <div 
+              <div
                 key={doc.id}
-                className="file-item slide-up"
+                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border"
               >
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <div className="flex-shrink-0">
-                    {getFileIcon(doc.name)}
-                  </div>
-                  
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-[var(--text-primary)] truncate">
-                      {doc.name}
-                    </p>
-                    <p className="text-sm text-[var(--text-tertiary)] mt-0.5">
-                      {formatFileSize(doc.size)}
+                <div className="flex items-center space-x-3">
+                  {getFileIcon(doc.name)}
+                  <div>
+                    <p className="font-medium text-sm text-gray-900">{doc.name}</p>
+                    <p className="text-xs text-gray-500">
+                      {formatFileSize(doc.size)} • {doc.type || 'Unknown type'}
+                      {doc.metadata && (
+                        <span className="ml-2">
+                          • {doc.metadata.originalSize.toLocaleString()} chars extracted
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>
                 
                 <button
                   onClick={() => removeDocument(doc.id)}
-                  className="flex-shrink-0 w-8 h-8 rounded-md text-[var(--text-tertiary)] hover:text-red-600 hover:bg-red-50 transition-all duration-200 flex items-center justify-center focus-ring"
-                  aria-label={`Remove ${doc.name}`}
+                  className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                  title="Remove file"
                 >
                   <X size={16} />
                 </button>

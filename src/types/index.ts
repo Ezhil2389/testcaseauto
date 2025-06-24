@@ -48,6 +48,7 @@ export interface StructuredSummary {
   constraints: string[];
   assumptions: string[];
   dependencies: string[];
+  otherComments?: string;
 }
 
 export interface Summary {
